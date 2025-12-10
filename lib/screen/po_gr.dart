@@ -23,6 +23,10 @@ List<DateTime> _holidays = [];
 
   bool _isPoLoading = false;
   bool _isGrLoading = false;
+
+  final TextEditingController _rfidController = TextEditingController();
+  final FocusNode _rfidFocusNode = FocusNode();
+  bool _isRfidDialogOpen = false;
   
   // Search filters
   bool _showSearchFilters = false;
@@ -32,6 +36,20 @@ List<DateTime> _holidays = [];
   final TextEditingController _dnNoController = TextEditingController();
   final TextEditingController _batchNoController = TextEditingController();
   final TextEditingController _slocController = TextEditingController();
+  
+  bool _isItemFullyReceived(Map<String, dynamic> item) {
+  final qtyPo = double.tryParse(item['QtyPO']?.toString() ?? '0') ?? 0;
+  final qtyGrTotal = double.tryParse(item['QtyGRTotal']?.toString() ?? '0') ?? 0;
+  return qtyGrTotal >= qtyPo;
+}
+
+// Add this method after _isItemFullyReceived
+double _getQtyBalance(Map<String, dynamic> item) {
+  final qtyPo = double.tryParse(item['QtyPO']?.toString() ?? '0') ?? 0;
+  final qtyGrTotal = double.tryParse(item['QtyGRTotal']?.toString() ?? '0') ?? 0;
+  final balance = qtyPo - qtyGrTotal;
+  return balance > 0 ? balance : 0;
+}
 
   UserProfile? _currentUser;
 
@@ -53,6 +71,7 @@ List<DateTime> _holidays = [];
 
 DateTime? _selectedPostDate;  
 DateTime? _selectedDocDate;   
+
   
   // Filter text field widths
   static const double filterItemNoWidth = 60;
@@ -316,9 +335,10 @@ Future<void> _showDatePicker({
     lastDate: lastDate,
     helpText: helpText,
     selectableDayPredicate: (DateTime date) {
-      // Only allow selectable dates (not weekends/holidays)
       return _isSelectableDate(date);
     },
+    // Force dd/MM/yyyy format
+    locale: const Locale('en', 'GB'), // British English uses dd/MM/yyyy
     builder: (context, child) {
       return Theme(
         data: Theme.of(context).copyWith(
@@ -423,11 +443,10 @@ Future<void> _selectDocDate() async {
   );
 }
 
-/// Format date to YYYY-MM-DD
+/// Format date to DD-MM-YY
 String _formatDate(DateTime date) {
-  return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}';
 }
-
 
   List<dynamic> _getFilteredPoItems() {
   if (!_showSearchFilters) return _poItems;
@@ -482,15 +501,178 @@ String _formatDate(DateTime date) {
     return;
   }
 
+  // ✅ SHOW RFID VERIFICATION DIALOG
+  await _showRfidVerificationDialog(dnNo);
+}
+
+/// Show RFID verification dialog before posting
+Future<void> _showRfidVerificationDialog(String dnNo) async {
+  _rfidController.clear();
+  _isRfidDialogOpen = true;
+  
+  return showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (BuildContext context) {
+      return Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 400),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.tap_and_play,
+                      color: Colors.blue,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'RFID Verification Required',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      _isRfidDialogOpen = false;
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.credit_card, color: Colors.blue[700], size: 32),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Tap your RFID card to authorize posting',
+                        style: TextStyle(
+                          color: Colors.blue[900],
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              TextField(
+                controller: _rfidController,
+                focusNode: _rfidFocusNode,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'RFID Card Number',
+                  hintText: 'Scan or enter RFID card',
+                  prefixIcon: const Icon(Icons.credit_card),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                ),
+                onSubmitted: (_) => _processGrWithRfid(dnNo),
+              ),
+              const SizedBox(height: 20),
+              
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        _isRfidDialogOpen = false;
+                        Navigator.of(context).pop();
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isGrLoading ? null : () => _processGrWithRfid(dnNo),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: _isGrLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text('Verify & Post'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  ).then((_) {
+    _isRfidDialogOpen = false;
+  });
+}
+
+/// Process GR posting with RFID verification
+Future<void> _processGrWithRfid(String dnNo) async {
+  final rfidCard = _rfidController.text.trim();
+  
+  if (rfidCard.isEmpty) {
+    _showErrorSnackBar('Please tap your RFID card');
+    return;
+  }
+
   String sloc = _slocController.text.trim();
   String batchNo = _batchNoController.text.trim();
 
-  // ✅ Use selected dates (Post Date is guaranteed to exist from validation)
   final docDate = _selectedDocDate != null 
-      ? _formatDate(_selectedDocDate!) 
+      ? _formatDate(_selectedDocDate!)
       : (_poHeader!['DocDate']?.toString() ?? _formatDate(DateTime.now()));
       
-  final postDate = _formatDate(_selectedPostDate!); // Safe to use ! after validation
+  final postDate = _formatDate(_selectedPostDate!);
 
   setState(() => _isGrLoading = true);
 
@@ -499,7 +681,6 @@ String _formatDate(DateTime date) {
     List<GoodReceiptItem> grItems = [];
     
     for (var itemNo in _selectedItemNos) {
-      // Find the full item data
       final itemData = _poItems.firstWhere(
         (item) => item['ItemNo']?.toString() == itemNo,
         orElse: () => null,
@@ -520,11 +701,12 @@ String _formatDate(DateTime date) {
       ));
     }
 
-    print('🚀 Posting ${grItems.length} items to SAP');
+    print('🚀 Posting ${grItems.length} items to SAP with RFID: $rfidCard');
     print('📅 Doc Date: $docDate | Post Date: $postDate');
 
-    // ✅ Call batch API
+    // ✅ Call batch API with RFID
     final response = await _apiService.createGoodReceiptBatch(
+      idCard: rfidCard,  // ✅ RFID verification
       dnNo: dnNo,
       docDate: docDate,
       postDate: postDate,
@@ -532,6 +714,11 @@ String _formatDate(DateTime date) {
     );
 
     setState(() => _isGrLoading = false);
+
+    // Close RFID dialog if successful
+    if (_isRfidDialogOpen && mounted) {
+      Navigator.of(context).pop();
+    }
 
     if (response.success) {
       if (response.data != null) {
@@ -543,7 +730,6 @@ String _formatDate(DateTime date) {
           final matDoc = response.data['MAT_DOC']?.toString() ?? 
                          response.data['mat_doc']?.toString() ?? '-';
           
-          // Build posted data for success dialog
           final postedData = {
             'po_no': _poHeader!['PoNo']?.toString() ?? '-',
             'items_count': grItems.length,
@@ -562,9 +748,10 @@ String _formatDate(DateTime date) {
           _dnNoController.clear();
           _batchNoController.clear();
           _slocController.clear();
+          _rfidController.clear();
           _resetSelections();
           
-          // Reload PO data to refresh Qty GR Total
+          // Reload PO data
           await _searchPO();
           
           if (mounted) {
@@ -577,7 +764,15 @@ String _formatDate(DateTime date) {
     }
   } catch (e) {
     setState(() => _isGrLoading = false);
-    _showErrorSnackBar('Exception: $e');
+    
+    // Handle RFID verification errors specifically
+    if (e.toString().contains('RFID') || e.toString().contains('not registered')) {
+      _showErrorSnackBar('Invalid RFID card. Please try again.');
+      _rfidController.clear();
+      _rfidFocusNode.requestFocus();
+    } else {
+      _showErrorSnackBar('Exception: $e');
+    }
   }
 }
 
@@ -588,17 +783,17 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
       return Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 500),
-          padding: const EdgeInsets.all(24),
+          constraints: const BoxConstraints(maxWidth: 500, maxHeight: 650), // ✅ Added maxHeight
+          padding: const EdgeInsets.all(20), // ✅ Reduced padding from 24 to 20
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Header
+              // Header - COMPACT
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(6), // ✅ Reduced from 8
                     decoration: BoxDecoration(
                       color: Colors.green[100],
                       shape: BoxShape.circle,
@@ -606,15 +801,15 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                     child: const Icon(
                       Icons.check_circle,
                       color: Colors.green,
-                      size: 32,
+                      size: 28, // ✅ Reduced from 32
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
                       'Good Receipt Created!',
                       style: TextStyle(
-                        fontSize: 20,
+                        fontSize: 18, // ✅ Reduced from 20
                         fontWeight: FontWeight.bold,
                         color: Colors.green,
                       ),
@@ -624,90 +819,103 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.of(context).pop(),
                     tooltip: 'Close',
+                    padding: EdgeInsets.zero, // ✅ Compact close button
+                    constraints: const BoxConstraints(),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              const Divider(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12), // ✅ Reduced from 20
+              const Divider(height: 1),
+              const SizedBox(height: 12), // ✅ Reduced from 16
               
-              // Material Document Number
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.green[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green[200]!),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      'Material Document',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      matDoc,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              
-              // Posted Details
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Posted Details',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDetailRow('PO Number', postedData['po_no']),
-                    _buildDetailRow('Items Posted', postedData['items_count'].toString()),
-                    _buildDetailRow('DN No', postedData['dn_no']),
-                    if (postedData['sloc'] != null)
-                      _buildDetailRow('SLOC', postedData['sloc']),
-                    if (postedData['batch_no'] != null)
-                      _buildDetailRow('Batch No', postedData['batch_no']),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Items:',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    ...(postedData['items'] as List).map((item) => 
-                      Padding(
-                        padding: const EdgeInsets.only(left: 16, bottom: 4),
-                        child: Text(
-                          '• Item ${item['item_no']}: Qty ${item['qty']}',
-                          style: const TextStyle(fontSize: 12),
+              // ✅ SCROLLABLE CONTENT
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Material Document Number
+                      Container(
+                        padding: const EdgeInsets.all(12), // ✅ Reduced from 16
+                        decoration: BoxDecoration(
+                          color: Colors.green[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.green[200]!),
                         ),
-                      )
-                    ).toList(),
-                  ],
+                        child: Column(
+                          children: [
+                            Text(
+                              'Material Document',
+                              style: TextStyle(
+                                fontSize: 11, // ✅ Reduced from 12
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              matDoc,
+                              style: const TextStyle(
+                                fontSize: 22, // ✅ Reduced from 24
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Posted Details
+                      Container(
+                        padding: const EdgeInsets.all(12), // ✅ Reduced from 16
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Posted Details',
+                              style: TextStyle(
+                                fontSize: 13, // ✅ Reduced from 14
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            _buildDetailRow('PO Number', postedData['po_no']),
+                            _buildDetailRow('Items Posted', postedData['items_count'].toString()),
+                            _buildDetailRow('DN No', postedData['dn_no']),
+                            if (postedData['sloc'] != null)
+                              _buildDetailRow('SLOC', postedData['sloc']),
+                            if (postedData['batch_no'] != null)
+                              _buildDetailRow('Batch No', postedData['batch_no']),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Items:',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 6),
+                            ...(postedData['items'] as List).map((item) => 
+                              Padding(
+                                padding: const EdgeInsets.only(left: 12, bottom: 3), // ✅ Reduced spacing
+                                child: Text(
+                                  '• Item ${item['item_no']}: Qty ${item['qty']}',
+                                  style: const TextStyle(fontSize: 11), // ✅ Reduced from 12
+                                ),
+                              )
+                            ).toList(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 20),
+              
+              const SizedBox(height: 16),
               
               // Close button
               ElevatedButton(
@@ -715,7 +923,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14), // ✅ Reduced from 16
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -723,7 +931,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                 child: const Text(
                   'Close',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15, // ✅ Reduced from 16
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -736,30 +944,29 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
   );
 }
 
-// Helper method to build detail rows
 Widget _buildDetailRow(String label, String value) {
   return Padding(
-    padding: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.only(bottom: 6), // ✅ Reduced from 8
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 120,
+          width: 100, // ✅ Reduced from 120
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 12, // ✅ Reduced from 13
               color: Colors.grey[700],
               fontWeight: FontWeight.w500,
             ),
           ),
         ),
-        const Text(': ', style: TextStyle(fontSize: 13)),
+        const Text(': ', style: TextStyle(fontSize: 12)),
         Expanded(
           child: Text(
             value,
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: 12, // ✅ Reduced from 13
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -769,9 +976,12 @@ Widget _buildDetailRow(String label, String value) {
   );
 }
 
+
 Widget _buildDataRow(Map<String, dynamic> item) {
   final itemNo = item['ItemNo']?.toString() ?? '';
   final isSelected = _selectedItemNos.contains(itemNo);
+  final isFullyReceived = _isItemFullyReceived(item);
+  final qtyBalance = _getQtyBalance(item);
   
   // Define consistent column widths
   const double itemNoWidth = 80;
@@ -779,24 +989,49 @@ Widget _buildDataRow(Map<String, dynamic> item) {
   const double qtyPoWidth = 100;
   const double uomWidth = 80;
   const double qtyGrTotalWidth = 120;
+  const double qtyBalanceWidth = 100;  // ✅ NEW
   const double goodReceiptWidth = 150;
   
   return InkWell(
-    onTap: () => _toggleItemSelection(item),
+    onTap: isFullyReceived ? null : () => _toggleItemSelection(item),
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isSelected ? Colors.blue[50] : Colors.white,
+        color: isFullyReceived 
+            ? Colors.grey[100]  // ✅ Changed: Light grey for completed items
+            : (isSelected ? Colors.blue[50] : Colors.white),
         border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
       ),
       child: Row(
-  children: [
-    SizedBox(width: itemNoWidth, child: Text(itemNo, style: _cellStyle())),
-          SizedBox(width: materialCodeWidth, child: Text(item['MaterialCode']?.toString() ?? '-', style: _cellStyle())),
+        children: [
+          SizedBox(
+            width: itemNoWidth, 
+            child: Text(
+              itemNo, 
+              style: TextStyle(
+                fontSize: 14,
+                color: isFullyReceived ? Colors.grey[600] : Colors.black87,  // ✅ Lighter text for completed
+                fontWeight: isFullyReceived ? FontWeight.normal : FontWeight.w500,
+              ),
+            )
+          ),
+          SizedBox(
+            width: materialCodeWidth, 
+            child: Text(
+              item['MaterialCode']?.toString() ?? '-', 
+              style: TextStyle(
+                fontSize: 14,
+                color: isFullyReceived ? Colors.grey[600] : Colors.black87,
+              ),
+            )
+          ),
           Expanded(
             child: Text(
               item['MaterialName']?.toString() ?? '-',
-              style: _cellStyle(),
+              style: TextStyle(
+                fontSize: 14,
+                color: isFullyReceived ? Colors.grey[600] : Colors.black87,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -804,7 +1039,10 @@ Widget _buildDataRow(Map<String, dynamic> item) {
             width: qtyPoWidth,
             child: Text(
               item['QtyPO']?.toString() ?? '0',
-              style: _cellStyle(),
+              style: TextStyle(
+                fontSize: 14,
+                color: isFullyReceived ? Colors.grey[600] : Colors.black87,
+              ),
               textAlign: TextAlign.right,
             ),
           ),
@@ -812,7 +1050,10 @@ Widget _buildDataRow(Map<String, dynamic> item) {
             width: uomWidth,
             child: Text(
               item['UnitPO']?.toString() ?? '-',
-              style: _cellStyle(),
+              style: TextStyle(
+                fontSize: 14,
+                color: isFullyReceived ? Colors.grey[600] : Colors.black87,
+              ),
               textAlign: TextAlign.center,
             ),
           ),
@@ -820,14 +1061,34 @@ Widget _buildDataRow(Map<String, dynamic> item) {
             width: qtyGrTotalWidth,
             child: Text(
               item['QtyGRTotal']?.toString() ?? '0',
-              style: _cellStyle(),
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: isFullyReceived ? Colors.green[600] : Colors.black87,
+              ),
               textAlign: TextAlign.right,
             ),
           ),
-          // ✅ Show Qty GR input ONLY if selected
+          // ✅ NEW: Qty Balance Column
+          // ✅ NEW: Simple text like Qty PO, green if balance is 0
+SizedBox(
+  width: qtyBalanceWidth,
+  child: Text(
+    qtyBalance.toStringAsFixed(0),
+    style: TextStyle(
+      fontSize: 14,
+      color: qtyBalance == 0 
+          ? Colors.green[700]  // Green if fulfilled (balance = 0)
+          : (isFullyReceived ? Colors.grey[600] : Colors.black87),
+      fontWeight: qtyBalance == 0 ? FontWeight.bold : FontWeight.normal,
+    ),
+    textAlign: TextAlign.right,
+  ),
+),
+          // ✅ Show Qty GR input ONLY if selected AND not fully received
           SizedBox(
             width: goodReceiptWidth,
-            child: isSelected
+            child: (isSelected && !isFullyReceived)
                 ? Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: SizedBox(
@@ -848,7 +1109,15 @@ Widget _buildDataRow(Map<String, dynamic> item) {
                       ),
                     ),
                   )
-                : const SizedBox.shrink(),
+                : isFullyReceived
+                    ? Center(
+                        child: Icon(
+                          Icons.check_circle,
+                          color: Colors.green[600],
+                          size: 20,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
           ),
           const SizedBox(width: 40), // Space for filter icon
         ],
@@ -856,6 +1125,7 @@ Widget _buildDataRow(Map<String, dynamic> item) {
     ),
   );
 }
+
 
   void _showErrorDialog(String title, String message) {
     showDialog(
@@ -1033,6 +1303,7 @@ Widget _buildDataRow(Map<String, dynamic> item) {
   const double qtyPoWidth = 100;
   const double uomWidth = 80;
   const double qtyGrTotalWidth = 120;
+  const double qtyBalanceWidth = 100;
   const double goodReceiptWidth = 150;
   
   
@@ -1316,6 +1587,7 @@ Container(
       SizedBox(width: qtyPoWidth, child: Text('Qty PO', style: _headerStyle(), textAlign: TextAlign.right)),
       SizedBox(width: uomWidth, child: Text('UoM', style: _headerStyle(), textAlign: TextAlign.center)),
       SizedBox(width: qtyGrTotalWidth, child: Text('Qty GR Total', style: _headerStyle(), textAlign: TextAlign.right)),
+      SizedBox(width: qtyBalanceWidth, child: Text('Qty Balance', style: _headerStyle(), textAlign: TextAlign.right)),
       SizedBox(width: goodReceiptWidth, child: Text('Qty GR', style: _headerStyle(), textAlign: TextAlign.center)),
       SizedBox(
         width: 40,
@@ -1453,10 +1725,6 @@ Container(
   return TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[800]);
 }
 
-  TextStyle _cellStyle() {
-  return const TextStyle(fontSize: 14, color: Colors.black87);
-}
-
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -1478,6 +1746,8 @@ void dispose() {
   _dnNoController.dispose();
   _batchNoController.dispose();
   _slocController.dispose();
+   _rfidController.dispose();  
+  _rfidFocusNode.dispose();
   
   // ✅ Dispose all qty controllers
   _qtyGrControllers.forEach((key, controller) => controller.dispose());

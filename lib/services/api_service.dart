@@ -5,7 +5,7 @@ import 'package:gr_po_oji/models/api_models.dart'; // Import the models
 
 class SapApiService {
   // Base URL - Change this to your actual API URL
-  static const String baseUrl = 'http://localhost/api';
+  static const String baseUrl = 'http://127.0.0.1:8000/api';
   
   // Singleton pattern
   static final SapApiService _instance = SapApiService._internal();
@@ -103,6 +103,39 @@ class SapApiService {
     }
   }
 
+  /// Login with RFID card
+Future<LoginResponse> loginWithRfid({
+  required String idCard,
+}) async {
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl/sap/login-rfid'),
+      headers: _getHeaders(includeAuth: false),
+      body: json.encode({
+        'id_card': idCard,
+      }),
+    );
+
+    final data = _handleResponse(response);
+
+    if (data['success'] == true) {
+      final token = data['data']['token'];
+      await _saveToken(token);
+      print('✅ RFID Token saved: ${token.substring(0, 20)}...');
+      print('✅ Token in memory: $_token');
+
+      return LoginResponse.fromJson(data);
+    } else {
+      throw ApiException(
+        message: data['message'] ?? 'RFID login failed',
+        statusCode: response.statusCode,
+      );
+    }
+  } catch (e) {
+    rethrow;
+  }
+}
+
   /// Logout current session
   Future<Map<String, dynamic>> logout() async {
     try {
@@ -194,9 +227,29 @@ class SapApiService {
     }
   }
 
+/// Verify RFID card before posting GR
+Future<RfidVerificationResponse> verifyRfid({
+  required String idCard,
+}) async {
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl/sap/verify-rfid'),
+      headers: _getHeaders(),
+      body: json.encode({
+        'id_card': idCard,
+      }),
+    );
+
+    final data = _handleResponse(response);
+    return RfidVerificationResponse.fromJson(data);
+  } catch (e) {
+    rethrow;
+  }
+}
   
  /// Create good receipt - Single item (simplified wrapper)
 Future<GoodReceiptResponse> createGoodReceipt({
+  required String idCard,      // ✅ ADD THIS
   String? dnNo,
   required String docDate,     
   required String postDate,    
@@ -210,6 +263,7 @@ Future<GoodReceiptResponse> createGoodReceipt({
 }) async {
   // Just call createGoodReceiptBatch with single item
   return await createGoodReceiptBatch(
+    idCard: idCard,            // ✅ ADD THIS
     dnNo: dnNo ?? '',
     docDate: docDate,
     postDate: postDate,
@@ -228,7 +282,9 @@ Future<GoodReceiptResponse> createGoodReceipt({
 }
 
 /// Create good receipt with multiple items - PRIMARY METHOD
+/// Create good receipt with multiple items - PRIMARY METHOD
 Future<GoodReceiptResponse> createGoodReceiptBatch({
+  required String idCard,        // ✅ ADD THIS - RFID for verification
   required String dnNo,
   required String docDate,
   required String postDate,
@@ -247,6 +303,7 @@ Future<GoodReceiptResponse> createGoodReceiptBatch({
     }).toList();
 
     final payload = {
+      'id_card': idCard,       // ✅ ADD THIS - RFID verification
       'dn_no': dnNo,           
       'doc_date': docDate,            
       'post_date': postDate,          
@@ -254,6 +311,7 @@ Future<GoodReceiptResponse> createGoodReceiptBatch({
     };
 
     print('🚀 Creating GR Batch with ${items.length} items');
+    print('🔑 RFID Card: $idCard');
     print('📦 Payload: ${json.encode(payload)}');
 
     final response = await http.post(

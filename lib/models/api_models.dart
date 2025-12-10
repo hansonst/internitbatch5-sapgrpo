@@ -388,3 +388,22 @@ class ApiException implements Exception {
     return 'ApiException: $message (Status: $statusCode)';
   }
 }
+class RfidVerificationResponse {
+  final bool success;
+  final String message;
+  final Map<String, dynamic>? userData;
+
+  RfidVerificationResponse({
+    required this.success,
+    required this.message,
+    this.userData,
+  });
+
+  factory RfidVerificationResponse.fromJson(Map<String, dynamic> json) {
+    return RfidVerificationResponse(
+      success: json['success'] ?? false,
+      message: json['message'] ?? '',
+      userData: json['data'],
+    );
+  }
+}

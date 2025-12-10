@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '/services/api_service.dart';
 import 'screen/po_gr.dart';
 import 'package:gr_po_oji/models/api_models.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 void main() {
   runApp(const MyApp());
@@ -34,25 +36,38 @@ class SapLoginPage extends StatefulWidget {
 class _SapLoginPageState extends State<SapLoginPage> {
   final TextEditingController _userIdController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _rfidController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final SapApiService _apiService = SapApiService();
   
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _isRfidMode = false; // Toggle between username/password and RFID
+  
+  final FocusNode _rfidFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
+    
+    // Auto-focus RFID field when in RFID mode
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isRfidMode) {
+        _rfidFocusNode.requestFocus();
+      }
+    });
   }
 
   @override
   void dispose() {
     _userIdController.dispose();
     _passwordController.dispose();
+    _rfidController.dispose();
+    _rfidFocusNode.dispose();
     super.dispose();
   }
 
-  // Handle login
+  // Handle normal login (username + password)
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -101,6 +116,66 @@ class _SapLoginPageState extends State<SapLoginPage> {
     }
   }
 
+  // Handle RFID login
+  Future<void> _loginWithRfid() async {
+    final rfidValue = _rfidController.text.trim();
+    
+    if (rfidValue.isEmpty) {
+      _showError('Please tap your RFID card');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await _apiService.loginWithRfid(
+        idCard: rfidValue,
+      );
+
+      if (!mounted) return;
+
+      if (response.success) {
+        _navigateToHome();
+      } else {
+        _showError(response.message);
+        // Clear RFID field and refocus for next attempt
+        _rfidController.clear();
+        _rfidFocusNode.requestFocus();
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      
+      String errorMessage = e.message;
+      
+      if (e.statusCode == 401) {
+        errorMessage = 'Invalid RFID card';
+      } else if (e.statusCode == 404) {
+        errorMessage = 'RFID card not registered';
+      } else if (e.statusCode >= 500) {
+        errorMessage = 'Server error. Please try again later';
+      }
+      
+      _showError(errorMessage);
+      // Clear RFID field and refocus for next attempt
+      _rfidController.clear();
+      _rfidFocusNode.requestFocus();
+    } catch (e) {
+      if (!mounted) return;
+      _showError('Connection error: ${e.toString()}');
+      // Clear RFID field and refocus for next attempt
+      _rfidController.clear();
+      _rfidFocusNode.requestFocus();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   /// Show error message
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -117,6 +192,24 @@ class _SapLoginPageState extends State<SapLoginPage> {
       context,
       MaterialPageRoute(builder: (context) => PoGrScreen()),
     );
+  }
+
+  // Toggle between login modes
+  void _toggleLoginMode() {
+    setState(() {
+      _isRfidMode = !_isRfidMode;
+      // Clear all fields when switching
+      _userIdController.clear();
+      _passwordController.clear();
+      _rfidController.clear();
+    });
+    
+    // Focus on RFID field when switching to RFID mode
+    if (_isRfidMode) {
+      Future.delayed(Duration(milliseconds: 100), () {
+        _rfidFocusNode.requestFocus();
+      });
+    }
   }
 
   @override
@@ -166,13 +259,22 @@ class _SapLoginPageState extends State<SapLoginPage> {
             ),
             SizedBox(height: 48),
             
-            _buildUserIdInputField(),
-            SizedBox(height: 16),
+            // Login mode toggle
+            _buildLoginModeToggle(),
+            SizedBox(height: 24),
             
-            _buildPasswordInputField(),
-            SizedBox(height: 16),
-            
-            _buildLoginButton(),
+            // Conditional rendering based on login mode
+            if (_isRfidMode) ...[
+              _buildRfidInputField(),
+              SizedBox(height: 16),
+              _buildRfidLoginButton(),
+            ] else ...[
+              _buildUserIdInputField(),
+              SizedBox(height: 16),
+              _buildPasswordInputField(),
+              SizedBox(height: 16),
+              _buildLoginButton(),
+            ],
             
             SizedBox(height: 40),
           ],
@@ -247,13 +349,20 @@ class _SapLoginPageState extends State<SapLoginPage> {
                             ),
                             SizedBox(height: 20),
                             
-                            _buildUserIdInputField(),
-                            SizedBox(height: 12),
+                            _buildLoginModeToggle(),
+                            SizedBox(height: 20),
                             
-                            _buildPasswordInputField(),
-                            SizedBox(height: 12),
-                            
-                            _buildLoginButton(),
+                            if (_isRfidMode) ...[
+                              _buildRfidInputField(),
+                              SizedBox(height: 12),
+                              _buildRfidLoginButton(),
+                            ] else ...[
+                              _buildUserIdInputField(),
+                              SizedBox(height: 12),
+                              _buildPasswordInputField(),
+                              SizedBox(height: 12),
+                              _buildLoginButton(),
+                            ],
                           ],
                         ),
                       ),
@@ -327,13 +436,20 @@ class _SapLoginPageState extends State<SapLoginPage> {
                             ),
                             SizedBox(height: 32),
                             
-                            _buildUserIdInputField(),
+                            _buildLoginModeToggle(),
                             SizedBox(height: 24),
                             
-                            _buildPasswordInputField(),
-                            SizedBox(height: 24),
-                            
-                            _buildLoginButton(),
+                            if (_isRfidMode) ...[
+                              _buildRfidInputField(),
+                              SizedBox(height: 24),
+                              _buildRfidLoginButton(),
+                            ] else ...[
+                              _buildUserIdInputField(),
+                              SizedBox(height: 24),
+                              _buildPasswordInputField(),
+                              SizedBox(height: 24),
+                              _buildLoginButton(),
+                            ],
                           ],
                         ),
                       ),
@@ -345,6 +461,155 @@ class _SapLoginPageState extends State<SapLoginPage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Build login mode toggle
+  Widget _buildLoginModeToggle() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (_isRfidMode) _toggleLoginMode();
+              },
+              child: Container(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: !_isRfidMode ? Colors.blue : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.person,
+                      color: !_isRfidMode ? Colors.white : Colors.grey[600],
+                      size: 20,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Username',
+                      style: TextStyle(
+                        color: !_isRfidMode ? Colors.white : Colors.grey[600],
+                        fontWeight: !_isRfidMode ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (!_isRfidMode) _toggleLoginMode();
+              },
+              child: Container(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _isRfidMode ? Colors.blue : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.credit_card,
+                      color: _isRfidMode ? Colors.white : Colors.grey[600],
+                      size: 20,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'RFID Card',
+                      style: TextStyle(
+                        color: _isRfidMode ? Colors.white : Colors.grey[600],
+                        fontWeight: _isRfidMode ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Build RFID input field
+  Widget _buildRfidInputField() {
+    return Column(
+      children: [
+        Container(
+          padding: EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue[200]!),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.tap_and_play, color: Colors.blue, size: 32),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _isLoading 
+                    ? 'Processing...' 
+                    : 'Tap your RFID card on the reader',
+                  style: TextStyle(
+                    color: Colors.blue[900],
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 16),
+        // Hidden input field that captures RFID scanner input
+        TextFormField(
+          controller: _rfidController,
+          focusNode: _rfidFocusNode,
+          enabled: !_isLoading,
+          autofocus: _isRfidMode,
+          keyboardType: TextInputType.number,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+          ],
+          decoration: InputDecoration(
+            labelText: 'RFID Card Number',
+            hintText: 'Scan or enter RFID card',
+            prefixIcon: const Icon(Icons.credit_card),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Colors.blue, width: 2),
+            ),
+            filled: true,
+            fillColor: Colors.grey[50],
+          ),
+          onFieldSubmitted: (_) => _loginWithRfid(),
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return 'Please tap your RFID card';
+            }
+            return null;
+          },
+        ),
+      ],
     );
   }
 
@@ -426,7 +691,7 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build Login button
+  /// Build Login button (for username/password)
   Widget _buildLoginButton() {
     return SizedBox(
       height: 50,
@@ -457,6 +722,42 @@ class _SapLoginPageState extends State<SapLoginPage> {
                   color: Colors.white,
                 ),
               ),
+      ),
+    );
+  }
+
+  /// Build RFID Login button
+  Widget _buildRfidLoginButton() {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton.icon(
+        onPressed: _isLoading ? null : _loginWithRfid,
+        icon: _isLoading
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+            : const Icon(Icons.tap_and_play, color: Colors.white),
+        label: Text(
+          _isLoading ? 'Processing...' : 'Login with Card',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF2196F3),
+          disabledBackgroundColor: Colors.grey[400],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 2,
+        ),
       ),
     );
   }
