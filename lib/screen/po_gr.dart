@@ -3,6 +3,8 @@ import '/services/api_service.dart';
 import '../main.dart';
 import 'package:gr_po_oji/models/api_models.dart';
 import '/services/holiday_service.dart';
+import '/services/inactivity_service.dart';
+import '/services/auth_service.dart';
 
 
 class PoGrScreen extends StatefulWidget {
@@ -14,6 +16,7 @@ class PoGrScreen extends StatefulWidget {
 
 class _PoGrScreenState extends State<PoGrScreen> {
   final SapApiService _apiService = SapApiService();
+  final InactivityService _inactivityService = InactivityService();
   
 List<DateTime> _holidays = [];
   bool _holidaysLoaded = false;
@@ -58,10 +61,10 @@ double _getQtyBalance(Map<String, dynamic> item) {
   Map<String, dynamic>? _poHeader;
   bool _showPoDetails = false;
   
-  // ✅ MULTI-SELECTION: Track selected items by ItemNo
+  //   MULTI-SELECTION: Track selected items by ItemNo
   Set<String> _selectedItemNos = {};
   
-  // ✅ MULTI-SELECTION: Store Qty GR per item (ItemNo -> TextEditingController)
+  //   MULTI-SELECTION: Store Qty GR per item (ItemNo -> TextEditingController)
   Map<String, TextEditingController> _qtyGrControllers = {};
   
   // GR History per item (keyed by ItemNo)
@@ -81,11 +84,35 @@ DateTime? _selectedDocDate;
   // ... rest of your code
 
   @override
-  void initState() {
-    super.initState();
-    _initializeService();
-    _loadHolidays();
-  }
+void initState() {
+  super.initState();
+  _initializeService();
+  _loadHolidays();
+  
+  print('🟢 Starting inactivity monitoring in PoGrScreen');
+  _inactivityService.startMonitoring(_handleInactivityTimeout);
+  print('🟢 Inactivity monitoring started');
+}
+
+  void _handleInactivityTimeout() {
+  if (!mounted) return;
+  
+  _apiService.logout().catchError((_) {});
+  
+  Navigator.pushAndRemoveUntil(
+    context,
+    MaterialPageRoute(builder: (context) => const SapLoginPage()),
+    (route) => false,
+  );
+  
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('Session expired due to inactivity'),
+      backgroundColor: Colors.orange,
+      duration: Duration(seconds: 4),
+    ),
+  );
+}
 
   Future<void> _initializeService() async {
     await _apiService.initialize();
@@ -113,7 +140,7 @@ DateTime? _selectedDocDate;
       _holidaysLoaded = true;
     });
     
-    print('✅ Loaded ${_holidays.length} holidays for calendar');
+    print('  Loaded ${_holidays.length} holidays for calendar');
   } catch (e) {
     print('⚠️ Failed to load holidays: $e');
     // Continue without holidays (weekends will still be blocked)
@@ -166,7 +193,7 @@ DateTime? _selectedDocDate;
   _showPoDetails = true;
   _isPoLoading = false;
   
-  // ✅ Set default doc date from PO
+  //   Set default doc date from PO
   if (_poHeader!['DocDate'] != null) {
     try {
       _selectedDocDate = DateTime.parse(_poHeader!['DocDate'].toString());
@@ -205,7 +232,7 @@ DateTime? _selectedDocDate;
     );
     
     if (response.success && response.data != null) {
-      print('✅ GR History loaded successfully');
+      print('  GR History loaded successfully');
       
       setState(() {
         _grHistory = {};
@@ -249,14 +276,14 @@ DateTime? _selectedDocDate;
   _slocController.clear();
   _plant = '1200';
   
-  // ✅ Clear all selected items
+  //   Clear all selected items
   _selectedItemNos.clear();
   
-  // ✅ Dispose and clear all qty controllers
+  //   Dispose and clear all qty controllers
   _qtyGrControllers.forEach((key, controller) => controller.dispose());
   _qtyGrControllers.clear();
   
-  // ✅ Reset dates
+  //   Reset dates
   _selectedPostDate = null;
   _selectedDocDate = null;
 }
@@ -266,12 +293,12 @@ DateTime? _selectedDocDate;
   
   setState(() {
     if (_selectedItemNos.contains(itemNo)) {
-      // ✅ Deselect: Remove from set and dispose controller
+      //   Deselect: Remove from set and dispose controller
       _selectedItemNos.remove(itemNo);
       _qtyGrControllers[itemNo]?.dispose();
       _qtyGrControllers.remove(itemNo);
     } else {
-      // ✅ Select: Add to set and create new controller
+      //   Select: Add to set and create new controller
       _selectedItemNos.add(itemNo);
       _qtyGrControllers[itemNo] = TextEditingController();
     }
@@ -361,6 +388,7 @@ Future<void> _showDatePicker({
 
 /// Show Post Date picker with backdate rules
 Future<void> _selectPostDate() async {
+  _inactivityService.resetTimer();
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
   
@@ -392,6 +420,7 @@ Future<void> _selectPostDate() async {
 /// Show Doc Date picker with backdate rules (same as Post Date)
 /// Show Doc Date picker with backdate rules (same as Post Date)
 Future<void> _selectDocDate() async {
+  _inactivityService.resetTimer();
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
   
@@ -444,7 +473,13 @@ Future<void> _selectDocDate() async {
 }
 
 /// Format date to DD-MM-YY
+
 String _formatDate(DateTime date) {
+  return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}';
+}
+
+/// Format date to DD-MM-YYYY for display only
+String _formatDateForDisplay(DateTime date) {
   return '${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}';
 }
 
@@ -468,26 +503,26 @@ String _formatDate(DateTime date) {
 }
 
   Future<void> _createGoodReceiptFromHeader() async {
-  // ✅ Validate: At least one item selected
+  //   Validate: At least one item selected
   if (_selectedItemNos.isEmpty) {
     _showErrorSnackBar('Please select at least one item');
     return;
   }
 
-  // ✅ Validate: Post Date is required
+  //   Validate: Post Date is required
   if (_selectedPostDate == null) {
     _showErrorSnackBar('Please select Post Date (Date GR)');
     return;
   }
 
-  // ✅ Validate: DN No is required
+  //   Validate: DN No is required
   String dnNo = _dnNoController.text.trim();
   if (dnNo.isEmpty) {
     _showErrorSnackBar('Please enter DN No');
     return;
   }
 
-  // ✅ Validate: All selected items must have Qty GR
+  //   Validate: All selected items must have Qty GR
   List<String> missingQty = [];
   for (var itemNo in _selectedItemNos) {
     final qtyText = _qtyGrControllers[itemNo]?.text.trim() ?? '';
@@ -501,7 +536,7 @@ String _formatDate(DateTime date) {
     return;
   }
 
-  // ✅ SHOW RFID VERIFICATION DIALOG
+  //   SHOW RFID VERIFICATION DIALOG
   await _showRfidVerificationDialog(dnNo);
 }
 
@@ -514,139 +549,164 @@ Future<void> _showRfidVerificationDialog(String dnNo) async {
     context: context,
     barrierDismissible: false,
     builder: (BuildContext context) {
+      //   Get screen dimensions
+      final screenHeight = MediaQuery.of(context).size.height;
+      final screenWidth = MediaQuery.of(context).size.width;
+      final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+      
+      //   Calculate available height (screen - keyboard - padding)
+      final availableHeight = screenHeight - keyboardHeight - 100;
+      
       return Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 400),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.tap_and_play,
-                      color: Colors.blue,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'RFID Verification Required',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+          constraints: BoxConstraints(
+            maxWidth: screenWidth * 0.5,  //   50% of screen width max
+            maxHeight: availableHeight,    //   Fit above keyboard
+          ),
+          padding: const EdgeInsets.all(20),  //   Reduced padding
+          child: SingleChildScrollView(  //   Make scrollable if needed
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header - COMPACT
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),  //   Reduced
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.tap_and_play,
+                        color: Colors.blue,
+                        size: 24,  //   Smaller icon
                       ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      _isRfidDialogOpen = false;
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.blue[200]!),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.credit_card, color: Colors.blue[700], size: 32),
-                    const SizedBox(width: 12),
-                    Expanded(
+                    const SizedBox(width: 10),
+                    const Expanded(
                       child: Text(
-                        'Tap your RFID card to authorize posting',
+                        'RFID Verification Required',
                         style: TextStyle(
-                          color: Colors.blue[900],
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 16,  //   Smaller text
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              
-              TextField(
-                controller: _rfidController,
-                focusNode: _rfidFocusNode,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'RFID Card Number',
-                  hintText: 'Scan or enter RFID card',
-                  prefixIcon: const Icon(Icons.credit_card),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  filled: true,
-                  fillColor: Colors.grey[50],
-                ),
-                onSubmitted: (_) => _processGrWithRfid(dnNo),
-              ),
-              const SizedBox(height: 20),
-              
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                       onPressed: () {
                         _isRfidDialogOpen = false;
                         Navigator.of(context).pop();
                       },
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),  //   Reduced spacing
+                
+                // Info banner - COMPACT
+                Container(
+                  padding: const EdgeInsets.all(12),  //   Reduced
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue[200]!),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.credit_card, color: Colors.blue[700], size: 24),  //   Smaller
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Tap your RFID card to authorize posting',
+                          style: TextStyle(
+                            color: Colors.blue[900],
+                            fontSize: 12,  //   Smaller text
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
-                      child: const Text('Cancel'),
-                    ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isGrLoading ? null : () => _processGrWithRfid(dnNo),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                ),
+                const SizedBox(height: 12),  //   Reduced spacing
+                
+                // RFID Input Field - COMPACT
+                TextField(
+                  controller: _rfidController,
+                  focusNode: _rfidFocusNode,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(fontSize: 14),  //   Smaller text
+                  decoration: InputDecoration(
+                    labelText: 'RFID Card Number',
+                    labelStyle: const TextStyle(fontSize: 12),  //   Smaller
+                    hintText: 'Scan or enter RFID card',
+                    hintStyle: const TextStyle(fontSize: 12),  //   Smaller
+                    prefixIcon: const Icon(Icons.credit_card, size: 20),  //   Smaller
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),  //   Compact
+                    isDense: true,
+                  ),
+                  onChanged: (_) => _inactivityService.resetTimer(),
+                  onSubmitted: (_) => _processGrWithRfid(dnNo),
+                ),
+                const SizedBox(height: 16),  //   Reduced spacing
+                
+                // Buttons - COMPACT
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          _isRfidDialogOpen = false;
+                          Navigator.of(context).pop();
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),  //   Reduced
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
+                        child: const Text('Cancel', style: TextStyle(fontSize: 13)),  //   Smaller
                       ),
-                      child: _isGrLoading
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text('Verify & Post'),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _isGrLoading ? null : () => _processGrWithRfid(dnNo),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),  //   Reduced
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: _isGrLoading
+                            ? const SizedBox(
+                                height: 18,  // Smaller spinner
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Verify & Post', style: TextStyle(fontSize: 13)),  //   Smaller
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -677,7 +737,7 @@ Future<void> _processGrWithRfid(String dnNo) async {
   setState(() => _isGrLoading = true);
 
   try {
-    // ✅ Build items array for batch posting
+    //   Build items array for batch posting
     List<GoodReceiptItem> grItems = [];
     
     for (var itemNo in _selectedItemNos) {
@@ -704,9 +764,9 @@ Future<void> _processGrWithRfid(String dnNo) async {
     print('🚀 Posting ${grItems.length} items to SAP with RFID: $rfidCard');
     print('📅 Doc Date: $docDate | Post Date: $postDate');
 
-    // ✅ Call batch API with RFID
+    //   Call batch API with RFID
     final response = await _apiService.createGoodReceiptBatch(
-      idCard: rfidCard,  // ✅ RFID verification
+      idCard: rfidCard,  //   RFID verification
       dnNo: dnNo,
       docDate: docDate,
       postDate: postDate,
@@ -783,8 +843,8 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
       return Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 500, maxHeight: 650), // ✅ Added maxHeight
-          padding: const EdgeInsets.all(20), // ✅ Reduced padding from 24 to 20
+          constraints: const BoxConstraints(maxWidth: 500, maxHeight: 650), //   Added maxHeight
+          padding: const EdgeInsets.all(20), //   Reduced padding from 24 to 20
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -793,7 +853,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(6), // ✅ Reduced from 8
+                    padding: const EdgeInsets.all(6), //   Reduced from 8
                     decoration: BoxDecoration(
                       color: Colors.green[100],
                       shape: BoxShape.circle,
@@ -801,7 +861,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                     child: const Icon(
                       Icons.check_circle,
                       color: Colors.green,
-                      size: 28, // ✅ Reduced from 32
+                      size: 28, //   Reduced from 32
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -809,7 +869,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                     child: Text(
                       'Good Receipt Created!',
                       style: TextStyle(
-                        fontSize: 18, // ✅ Reduced from 20
+                        fontSize: 18, //   Reduced from 20
                         fontWeight: FontWeight.bold,
                         color: Colors.green,
                       ),
@@ -819,16 +879,16 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.of(context).pop(),
                     tooltip: 'Close',
-                    padding: EdgeInsets.zero, // ✅ Compact close button
+                    padding: EdgeInsets.zero, //   Compact close button
                     constraints: const BoxConstraints(),
                   ),
                 ],
               ),
-              const SizedBox(height: 12), // ✅ Reduced from 20
+              const SizedBox(height: 12), //   Reduced from 20
               const Divider(height: 1),
-              const SizedBox(height: 12), // ✅ Reduced from 16
+              const SizedBox(height: 12), //   Reduced from 16
               
-              // ✅ SCROLLABLE CONTENT
+              //   SCROLLABLE CONTENT
               Flexible(
                 child: SingleChildScrollView(
                   child: Column(
@@ -836,7 +896,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                     children: [
                       // Material Document Number
                       Container(
-                        padding: const EdgeInsets.all(12), // ✅ Reduced from 16
+                        padding: const EdgeInsets.all(12), //   Reduced from 16
                         decoration: BoxDecoration(
                           color: Colors.green[50],
                           borderRadius: BorderRadius.circular(12),
@@ -847,7 +907,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                             Text(
                               'Material Document',
                               style: TextStyle(
-                                fontSize: 11, // ✅ Reduced from 12
+                                fontSize: 11, //   Reduced from 12
                                 color: Colors.grey[600],
                                 fontWeight: FontWeight.w500,
                               ),
@@ -856,7 +916,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                             Text(
                               matDoc,
                               style: const TextStyle(
-                                fontSize: 22, // ✅ Reduced from 24
+                                fontSize: 22, //   Reduced from 24
                                 fontWeight: FontWeight.bold,
                                 color: Colors.green,
                                 letterSpacing: 1.2,
@@ -869,7 +929,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                       
                       // Posted Details
                       Container(
-                        padding: const EdgeInsets.all(12), // ✅ Reduced from 16
+                        padding: const EdgeInsets.all(12), //   Reduced from 16
                         decoration: BoxDecoration(
                           color: Colors.grey[50],
                           borderRadius: BorderRadius.circular(12),
@@ -880,7 +940,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                             const Text(
                               'Posted Details',
                               style: TextStyle(
-                                fontSize: 13, // ✅ Reduced from 14
+                                fontSize: 13, //   Reduced from 14
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -900,10 +960,10 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                             const SizedBox(height: 6),
                             ...(postedData['items'] as List).map((item) => 
                               Padding(
-                                padding: const EdgeInsets.only(left: 12, bottom: 3), // ✅ Reduced spacing
+                                padding: const EdgeInsets.only(left: 12, bottom: 3), //   Reduced spacing
                                 child: Text(
                                   '• Item ${item['item_no']}: Qty ${item['qty']}',
-                                  style: const TextStyle(fontSize: 11), // ✅ Reduced from 12
+                                  style: const TextStyle(fontSize: 11), //   Reduced from 12
                                 ),
                               )
                             ).toList(),
@@ -923,7 +983,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14), // ✅ Reduced from 16
+                  padding: const EdgeInsets.symmetric(vertical: 14), //   Reduced from 16
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -931,7 +991,7 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
                 child: const Text(
                   'Close',
                   style: TextStyle(
-                    fontSize: 15, // ✅ Reduced from 16
+                    fontSize: 15, //   Reduced from 16
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -946,16 +1006,16 @@ void _showGrSuccessDialog(String matDoc, Map<String, dynamic>? responseData, Map
 
 Widget _buildDetailRow(String label, String value) {
   return Padding(
-    padding: const EdgeInsets.only(bottom: 6), // ✅ Reduced from 8
+    padding: const EdgeInsets.only(bottom: 6), //   Reduced from 8
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 100, // ✅ Reduced from 120
+          width: 100, //   Reduced from 120
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 12, // ✅ Reduced from 13
+              fontSize: 12, //   Reduced from 13
               color: Colors.grey[700],
               fontWeight: FontWeight.w500,
             ),
@@ -966,7 +1026,7 @@ Widget _buildDetailRow(String label, String value) {
           child: Text(
             value,
             style: const TextStyle(
-              fontSize: 12, // ✅ Reduced from 13
+              fontSize: 12, //   Reduced from 13
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -989,7 +1049,7 @@ Widget _buildDataRow(Map<String, dynamic> item) {
   const double qtyPoWidth = 100;
   const double uomWidth = 80;
   const double qtyGrTotalWidth = 120;
-  const double qtyBalanceWidth = 100;  // ✅ NEW
+  const double qtyBalanceWidth = 100;  //   NEW
   const double goodReceiptWidth = 150;
   
   return InkWell(
@@ -998,7 +1058,7 @@ Widget _buildDataRow(Map<String, dynamic> item) {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: isFullyReceived 
-            ? Colors.grey[100]  // ✅ Changed: Light grey for completed items
+            ? Colors.grey[100]  //   Changed: Light grey for completed items
             : (isSelected ? Colors.blue[50] : Colors.white),
         border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
       ),
@@ -1010,7 +1070,7 @@ Widget _buildDataRow(Map<String, dynamic> item) {
               itemNo, 
               style: TextStyle(
                 fontSize: 14,
-                color: isFullyReceived ? Colors.grey[600] : Colors.black87,  // ✅ Lighter text for completed
+                color: isFullyReceived ? Colors.grey[600] : Colors.black87,  //   Lighter text for completed
                 fontWeight: isFullyReceived ? FontWeight.normal : FontWeight.w500,
               ),
             )
@@ -1069,8 +1129,8 @@ Widget _buildDataRow(Map<String, dynamic> item) {
               textAlign: TextAlign.right,
             ),
           ),
-          // ✅ NEW: Qty Balance Column
-          // ✅ NEW: Simple text like Qty PO, green if balance is 0
+          //   NEW: Qty Balance Column
+          //   NEW: Simple text like Qty PO, green if balance is 0
 SizedBox(
   width: qtyBalanceWidth,
   child: Text(
@@ -1085,7 +1145,7 @@ SizedBox(
     textAlign: TextAlign.right,
   ),
 ),
-          // ✅ Show Qty GR input ONLY if selected AND not fully received
+          //   Show Qty GR input ONLY if selected AND not fully received
           SizedBox(
             width: goodReceiptWidth,
             child: (isSelected && !isFullyReceived)
@@ -1148,100 +1208,105 @@ SizedBox(
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+Widget build(BuildContext context) {
+  return GestureDetector(
+    behavior: HitTestBehavior.translucent,
+    onTap: () => _inactivityService.resetTimer(),
+    onPanDown: (_) => _inactivityService.resetTimer(),
+    child: Scaffold(
       appBar: AppBar(
-  title: const Text('Purchase Order & Good Receipt'),
-  backgroundColor: Colors.lightBlue,
-  actions: [
-    // Refresh Button (icon only)
-    IconButton(
-      icon: _isPoLoading 
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-            )
-          : const Icon(Icons.refresh),
-      onPressed: _isPoLoading ? null : () async {
-        if (_poNoController.text.isNotEmpty) {
-          await _searchPO();
-        }
-      },
-      tooltip: 'Refresh PO Data',
-    ),
-    if (_currentUser != null) ...[
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(20),
+        title: const Text('Purchase Order & Good Receipt'),
+        backgroundColor: Colors.lightBlue,
+        actions: [
+          // Refresh Button (icon only)
+          IconButton(
+            icon: _isPoLoading 
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.refresh),
+            onPressed: _isPoLoading ? null : () async {
+              if (_poNoController.text.isNotEmpty) {
+                await _searchPO();
+              }
+            },
+            tooltip: 'Refresh PO Data',
+          ),
+          if (_currentUser != null) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.account_circle, size: 20),
+                      const SizedBox(width: 8),
+                      Text(_currentUser!.fullName, style: const TextStyle(fontSize: 14)),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.account_circle, size: 20),
-                const SizedBox(width: 8),
-                Text(_currentUser!.fullName, style: const TextStyle(fontSize: 14)),
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () async {
+                await _apiService.logout();
+                if (mounted) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (context) => const SapLoginPage()),
+                    (route) => false,
+                  );
+                }
+              },
+            ),
+          ],
+        ],
+      ),
+      body: _buildBody(),
+    ),  //   Close Scaffold
+  );  //   Close GestureDetector
+}
+
+Widget _buildBody() {
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final isDesktop = constraints.maxWidth > 1024;
+      
+      return SingleChildScrollView(
+        child: Padding(
+          padding: EdgeInsets.all(isDesktop ? 24 : 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildSearchSection(isDesktop),
+              
+              if (_showPoDetails && _poHeader != null) ...[
+                const SizedBox(height: 24),
+                
+                
+                const SizedBox(height: 16),
+                _buildPoItemsTable(isDesktop),
               ],
-            ),
+              
+              if (!_showPoDetails && !_isPoLoading) ...[
+                const SizedBox(height: 48),
+                _buildEmptyState(),
+              ],
+            ],
           ),
         ),
-      ),
-      IconButton(
-        icon: const Icon(Icons.logout),
-        onPressed: () async {
-          await _apiService.logout();
-          if (mounted) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const SapLoginPage()),
-              (route) => false,
-            );
-          }
-        },
-      ),
-    ],
-  ],
-),
-      body: _buildBody(),
-    );
-  }
-
-  Widget _buildBody() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isDesktop = constraints.maxWidth > 1024;
-        
-        return SingleChildScrollView(
-          child: Padding(
-            padding: EdgeInsets.all(isDesktop ? 24 : 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildSearchSection(isDesktop),
-                
-                if (_showPoDetails && _poHeader != null) ...[
-                  const SizedBox(height: 24),
-                  
-                  
-                  const SizedBox(height: 16),
-                  _buildPoItemsTable(isDesktop),
-                ],
-                
-                if (!_showPoDetails && !_isPoLoading) ...[
-                  const SizedBox(height: 48),
-                  _buildEmptyState(),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+      );
+    },
+  );
+}
 
   Widget _buildSearchSection(bool isDesktop) {
     return Card(
@@ -1263,6 +1328,7 @@ SizedBox(
                   filled: true,
                   fillColor: Colors.grey[50],
                 ),
+                onChanged: (_) => _inactivityService.resetTimer(),
                 onSubmitted: (_) => _searchPO(),
               ),
             ),
@@ -1388,12 +1454,13 @@ Expanded(
             filled: true,
             fillColor: Colors.white,
           ),
+          onChanged: (_) => _inactivityService.resetTimer(),
           style: const TextStyle(fontSize: 12),
         ),
       ),
       const SizedBox(height: 12),
       
-      // ✅ Post Date (Date GR) with Calendar Picker
+      //   Post Date (Date GR) with Calendar Picker
       Text('Post Date (Date GR)', style: TextStyle(fontSize: 11, color: Colors.grey[700])),
       const SizedBox(height: 4),
       SizedBox(
@@ -1415,7 +1482,7 @@ Expanded(
                 Expanded(
                   child: Text(
                     _selectedPostDate != null 
-                        ? _formatDate(_selectedPostDate!)
+                        ? _formatDateForDisplay(_selectedPostDate!)
                         : 'Select Date',
                     style: TextStyle(
                       fontSize: 12,
@@ -1444,7 +1511,7 @@ Expanded(
               width: 160,
               height: 36,
               child: TextField(
-  controller: _batchNoController,  // ✅ Use controller
+  controller: _batchNoController,  //   Use controller
   decoration: InputDecoration(
     hintText: 'Enter Batch No',
     hintStyle: TextStyle(fontSize: 11, color: Colors.grey[400]),
@@ -1454,6 +1521,7 @@ Expanded(
     filled: true,
     fillColor: Colors.white,
   ),
+  onChanged: (_) => _inactivityService.resetTimer(),
   style: const TextStyle(fontSize: 12),
 ),
             ),
@@ -1464,7 +1532,7 @@ Expanded(
               width: 160,
               height: 36,
               child: TextField(
-  controller: _slocController,  // ✅ Use controller
+  controller: _slocController,  //   Use controller
   decoration: InputDecoration(
     hintText: 'Enter SLOC',
     hintStyle: TextStyle(fontSize: 11, color: Colors.grey[400]),
@@ -1473,7 +1541,8 @@ Expanded(
     isDense: true,
     filled: true,
     fillColor: Colors.white,
-  ), 
+  ),
+  onChanged: (_) => _inactivityService.resetTimer(), 
   style: const TextStyle(fontSize: 12),
 ),
             ),
@@ -1492,7 +1561,7 @@ Expanded(
       Text('1200', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
       const SizedBox(height: 26),
       
-      // ✅ Doc Date with Calendar Picker
+      //   Doc Date with Calendar Picker
 Text('Doc Date', style: TextStyle(fontSize: 11, color: Colors.grey[700])),
 const SizedBox(height: 4),
 SizedBox(
@@ -1514,7 +1583,7 @@ SizedBox(
           Expanded(
             child: Text(
               _selectedDocDate != null 
-                  ? _formatDate(_selectedDocDate!)
+                  ? _formatDateForDisplay(_selectedDocDate!)
                   : (_poHeader!['DocDate']?.toString() ?? 'Select Date'),
               style: const TextStyle(fontSize: 12),
               overflow: TextOverflow.ellipsis,
@@ -1574,7 +1643,6 @@ Expanded(
 ),
         
         // Column Headers with Search Toggle
-       // Inside _buildPoItemsTable, update the header row:
 
 Container(
   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1614,78 +1682,87 @@ Container(
   ),
 ),
         
-        if (_showSearchFilters) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.grey[50],
-            child: Row(
-              children: [
-                // Item No Filter - SMALLER width
-                SizedBox(
-                  width: filterItemNoWidth,
-                  child: SizedBox(
-                    height: 32,
-                    child: TextField(
-                      controller: _itemNoSearchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search...',
-                        hintStyle: TextStyle(fontSize: 10, color: Colors.grey[400]),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        isDense: true,
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                // Material Code Filter - SMALLER width
-                SizedBox(
-                  width: filterMaterialCodeWidth,
-                  child: SizedBox(
-                    height: 32,
-                    child: TextField(
-                      controller: _materialCodeSearchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search...',
-                        hintStyle: TextStyle(fontSize: 10, color: Colors.grey[400]),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        isDense: true,
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                // Material Name Filter - SMALLER fixed width
-                SizedBox(
-                  width: filterMaterialNameWidth,
-                  child: SizedBox(
-                    height: 32,
-                    child: TextField(
-                      controller: _materialNameSearchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search...',
-                        hintStyle: TextStyle(fontSize: 10, color: Colors.grey[400]),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        isDense: true,
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                ),
-                // Spacer to push remaining content to the right
-                const Spacer(),
-              ],
+       if (_showSearchFilters) ...[
+  Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    color: Colors.grey[50],
+    child: Row(
+      children: [
+        // Item No Filter - SMALLER width
+        SizedBox(
+          width: filterItemNoWidth,
+          child: SizedBox(
+            height: 32,
+            child: TextField(
+              controller: _itemNoSearchController,
+              decoration: InputDecoration(
+                hintText: 'Search...',
+                hintStyle: TextStyle(fontSize: 10, color: Colors.grey[400]),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 11),
+              onChanged: (_) {
+                _inactivityService.resetTimer();  
+                setState(() {});
+              },
             ),
           ),
-          const Divider(height: 1),
-        ],
+        ),
+        const SizedBox(width: 16),
+        // Material Code Filter - SMALLER width
+        SizedBox(
+          width: filterMaterialCodeWidth,
+          child: SizedBox(
+            height: 32,
+            child: TextField(
+              controller: _materialCodeSearchController,
+              decoration: InputDecoration(
+                hintText: 'Search...',
+                hintStyle: TextStyle(fontSize: 10, color: Colors.grey[400]),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 11),
+              onChanged: (_) {
+                _inactivityService.resetTimer(); 
+                setState(() {});
+              },
+            ),
+          ),
+        ),
+        const SizedBox(width: 16),
+        // Material Name Filter - SMALLER fixed width
+        SizedBox(
+          width: filterMaterialNameWidth,
+          child: SizedBox(
+            height: 32,
+            child: TextField(
+              controller: _materialNameSearchController,
+              decoration: InputDecoration(
+                hintText: 'Search...',
+                hintStyle: TextStyle(fontSize: 10, color: Colors.grey[400]),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 11),
+              onChanged: (_) {
+                _inactivityService.resetTimer(); 
+                setState(() {});
+              },
+            ),
+          ),
+        ),
+        // Spacer to push remaining content to the right
+        const Spacer(),
+      ],
+    ),
+  ),
+  const Divider(height: 1),
+],
         
         // Data Rows with Scroll (Max 5 visible)
         Container(
@@ -1739,6 +1816,7 @@ Container(
 
   @override
 void dispose() {
+  _inactivityService.stopMonitoring();
   _poNoController.dispose();
   _itemNoSearchController.dispose();
   _materialCodeSearchController.dispose();
@@ -1749,7 +1827,7 @@ void dispose() {
    _rfidController.dispose();  
   _rfidFocusNode.dispose();
   
-  // ✅ Dispose all qty controllers
+  //   Dispose all qty controllers
   _qtyGrControllers.forEach((key, controller) => controller.dispose());
   
   super.dispose();

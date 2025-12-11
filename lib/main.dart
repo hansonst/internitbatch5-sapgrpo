@@ -1,16 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '/services/api_service.dart';
+import '/services/auth_service.dart';
 import 'screen/po_gr.dart';
 import 'package:gr_po_oji/models/api_models.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import '/services/inactivity_service.dart';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize services
+  final authService = AuthService();
+  final apiService = SapApiService();
+  
+  await authService.initialize();
+  await apiService.initialize();
+  
+  runApp(MyApp(isAuthenticated: authService.isAuthenticated));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  final bool isAuthenticated;
+  
+  const MyApp({Key? key, required this.isAuthenticated}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +33,8 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const SapLoginPage(),
+      // Auto-route based on authentication status
+      home: isAuthenticated ? PoGrScreen() : const SapLoginPage(),
     );
   }
 }
@@ -39,10 +52,11 @@ class _SapLoginPageState extends State<SapLoginPage> {
   final TextEditingController _rfidController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final SapApiService _apiService = SapApiService();
+  final InactivityService _inactivityService = InactivityService();
   
   bool _isLoading = false;
   bool _obscurePassword = true;
-  bool _isRfidMode = false; // Toggle between username/password and RFID
+  bool _isRfidMode = false;
   
   final FocusNode _rfidFocusNode = FocusNode();
 
@@ -50,12 +64,16 @@ class _SapLoginPageState extends State<SapLoginPage> {
   void initState() {
     super.initState();
     
+    // Setup auto-logout callback
+    _apiService.onUnauthorized = _handleUnauthorized;
+    
     // Auto-focus RFID field when in RFID mode
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_isRfidMode) {
         _rfidFocusNode.requestFocus();
       }
     });
+    
   }
 
   @override
@@ -67,7 +85,28 @@ class _SapLoginPageState extends State<SapLoginPage> {
     super.dispose();
   }
 
-  // Handle normal login (username + password)
+  /// Handle automatic logout when session expires
+  void _handleUnauthorized() {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Session expired. Please login again.'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 3),
+      ),
+    );
+    
+    // Already on login page, just clear the form
+    setState(() {
+      _userIdController.clear();
+      _passwordController.clear();
+      _rfidController.clear();
+      _isLoading = false;
+    });
+  }
+
+  /// Handle normal login (username + password)
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -116,7 +155,7 @@ class _SapLoginPageState extends State<SapLoginPage> {
     }
   }
 
-  // Handle RFID login
+  /// Handle RFID login
   Future<void> _loginWithRfid() async {
     final rfidValue = _rfidController.text.trim();
     
@@ -140,7 +179,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
         _navigateToHome();
       } else {
         _showError(response.message);
-        // Clear RFID field and refocus for next attempt
         _rfidController.clear();
         _rfidFocusNode.requestFocus();
       }
@@ -158,13 +196,11 @@ class _SapLoginPageState extends State<SapLoginPage> {
       }
       
       _showError(errorMessage);
-      // Clear RFID field and refocus for next attempt
       _rfidController.clear();
       _rfidFocusNode.requestFocus();
     } catch (e) {
       if (!mounted) return;
       _showError('Connection error: ${e.toString()}');
-      // Clear RFID field and refocus for next attempt
       _rfidController.clear();
       _rfidFocusNode.requestFocus();
     } finally {
@@ -176,7 +212,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     }
   }
 
-  /// Show error message
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -194,50 +229,40 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  // Toggle between login modes
   void _toggleLoginMode() {
     setState(() {
       _isRfidMode = !_isRfidMode;
-      // Clear all fields when switching
       _userIdController.clear();
       _passwordController.clear();
       _rfidController.clear();
     });
     
-    // Focus on RFID field when switching to RFID mode
     if (_isRfidMode) {
       Future.delayed(Duration(milliseconds: 100), () {
         _rfidFocusNode.requestFocus();
       });
     }
   }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    backgroundColor: Colors.white,
+    body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            // Mobile layout
             if (constraints.maxWidth < 600) {
               return _buildMobileLayout();
-            }
-            // Tablet layout
-            else if (constraints.maxWidth < 1200) {
+            } else if (constraints.maxWidth < 1200) {
               return _buildTabletLayout();
-            }
-            // Desktop layout
-            else {
+            } else {
               return _buildDesktopLayout();
             }
           },
         ),
-      ),
+        ),
     );
   }
 
-  /// Mobile layout
   Widget _buildMobileLayout() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
@@ -248,8 +273,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SizedBox(height: 40),
-            
-            // Company Logo
             SizedBox(
               height: 120,
               child: Image.asset(
@@ -258,12 +281,8 @@ class _SapLoginPageState extends State<SapLoginPage> {
               ),
             ),
             SizedBox(height: 48),
-            
-            // Login mode toggle
             _buildLoginModeToggle(),
             SizedBox(height: 24),
-            
-            // Conditional rendering based on login mode
             if (_isRfidMode) ...[
               _buildRfidInputField(),
               SizedBox(height: 16),
@@ -275,7 +294,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
               SizedBox(height: 16),
               _buildLoginButton(),
             ],
-            
             SizedBox(height: 40),
           ],
         ),
@@ -283,7 +301,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Tablet layout
   Widget _buildTabletLayout() {
     return SingleChildScrollView(
       child: Container(
@@ -296,7 +313,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Left side - Logo
               Expanded(
                 flex: 1,
                 child: Container(
@@ -319,10 +335,7 @@ class _SapLoginPageState extends State<SapLoginPage> {
                   ),
                 ),
               ),
-              
               SizedBox(width: 24),
-              
-              // Right side - Login form
               Expanded(
                 flex: 1,
                 child: Container(
@@ -348,10 +361,8 @@ class _SapLoginPageState extends State<SapLoginPage> {
                               textAlign: TextAlign.center,
                             ),
                             SizedBox(height: 20),
-                            
                             _buildLoginModeToggle(),
                             SizedBox(height: 20),
-                            
                             if (_isRfidMode) ...[
                               _buildRfidInputField(),
                               SizedBox(height: 12),
@@ -377,7 +388,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Desktop layout
   Widget _buildDesktopLayout() {
     return Center(
       child: Container(
@@ -386,7 +396,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
           padding: const EdgeInsets.all(48.0),
           child: Row(
             children: [
-              // Left side - Logo
               Expanded(
                 flex: 2,
                 child: Column(
@@ -403,10 +412,7 @@ class _SapLoginPageState extends State<SapLoginPage> {
                   ],
                 ),
               ),
-              
               SizedBox(width: 64),
-              
-              // Right side - Login form
               Expanded(
                 flex: 1,
                 child: Container(
@@ -435,10 +441,8 @@ class _SapLoginPageState extends State<SapLoginPage> {
                               textAlign: TextAlign.center,
                             ),
                             SizedBox(height: 32),
-                            
                             _buildLoginModeToggle(),
                             SizedBox(height: 24),
-                            
                             if (_isRfidMode) ...[
                               _buildRfidInputField(),
                               SizedBox(height: 24),
@@ -464,7 +468,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build login mode toggle
   Widget _buildLoginModeToggle() {
     return Container(
       decoration: BoxDecoration(
@@ -542,7 +545,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build RFID input field
   Widget _buildRfidInputField() {
     return Column(
       children: [
@@ -573,7 +575,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
           ),
         ),
         SizedBox(height: 16),
-        // Hidden input field that captures RFID scanner input
         TextFormField(
           controller: _rfidController,
           focusNode: _rfidFocusNode,
@@ -613,7 +614,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build User ID input field
   Widget _buildUserIdInputField() {
     return TextFormField(
       controller: _userIdController,
@@ -646,7 +646,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build Password input field
   Widget _buildPasswordInputField() {
     return TextFormField(
       controller: _passwordController,
@@ -691,7 +690,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build Login button (for username/password)
   Widget _buildLoginButton() {
     return SizedBox(
       height: 50,
@@ -726,7 +724,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
     );
   }
 
-  /// Build RFID Login button
   Widget _buildRfidLoginButton() {
     return SizedBox(
       height: 50,
