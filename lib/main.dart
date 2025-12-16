@@ -4,7 +4,6 @@ import '/services/api_service.dart';
 import '/services/auth_service.dart';
 import 'screen/po_gr.dart';
 import 'package:gr_po_oji/models/api_models.dart';
-import '/services/inactivity_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,7 +51,6 @@ class _SapLoginPageState extends State<SapLoginPage> {
   final TextEditingController _rfidController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final SapApiService _apiService = SapApiService();
-  final InactivityService _inactivityService = InactivityService();
   
   bool _isLoading = false;
   bool _obscurePassword = true;

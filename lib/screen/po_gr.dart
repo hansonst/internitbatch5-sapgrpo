@@ -4,7 +4,7 @@ import '../main.dart';
 import 'package:gr_po_oji/models/api_models.dart';
 import '/services/holiday_service.dart';
 import '/services/inactivity_service.dart';
-import '/services/auth_service.dart';
+
 
 
 class PoGrScreen extends StatefulWidget {
@@ -188,20 +188,20 @@ void initState() {
         final items = response.data['value'] as List<dynamic>;
         if (items.isNotEmpty) {
           setState(() {
-  _poItems = items;
-  _poHeader = items.first;
-  _showPoDetails = true;
-  _isPoLoading = false;
-  
-  //   Set default doc date from PO
-  if (_poHeader!['DocDate'] != null) {
-    try {
-      _selectedDocDate = DateTime.parse(_poHeader!['DocDate'].toString());
-    } catch (e) {
-      _selectedDocDate = null;
-    }
-  }
-});
+            _poItems = items;
+            _poHeader = items.first;
+            _showPoDetails = true;
+            _isPoLoading = false;
+            
+            // Set default doc date from PO
+            if (_poHeader!['DocDate'] != null) {
+              try {
+                _selectedDocDate = DateTime.parse(_poHeader!['DocDate'].toString());
+              } catch (e) {
+                _selectedDocDate = null;
+              }
+            }
+          });
           
           // ✨ LOAD REAL GR HISTORY FROM DATABASE
           await _loadGrHistory();
@@ -210,14 +210,42 @@ void initState() {
           setState(() => _isPoLoading = false);
           _showErrorDialog('PO Not Released', 'This Purchase Order is not released yet.');
         }
+      } else {
+        setState(() => _isPoLoading = false);
+        _showErrorSnackBar(response.message ?? 'Failed to fetch PO');
       }
     } else {
       setState(() => _isPoLoading = false);
       _showErrorSnackBar(response.message ?? 'Failed to fetch PO');
     }
+  } on ApiException catch (e) {
+    setState(() => _isPoLoading = false);
+    
+    if (!mounted) return;
+    
+    // Handle different HTTP status codes
+    if (e.statusCode == 400) {
+      // Show dialog for 400 Bad Request (PO Not Found)
+      _showErrorDialog(
+        'PO Not Found', 
+        'Purchase Order "${_poNoController.text.trim()}" does not exist in the system.\n\nPlease check the PO number and try again.'
+      );
+    } else if (e.statusCode == 404) {
+      _showErrorDialog(
+        'PO Not Found', 
+        'Purchase Order "${_poNoController.text.trim()}" was not found.'
+      );
+    } else if (e.statusCode == 401) {
+      _showErrorSnackBar('Session expired. Please login again.');
+    } else if (e.statusCode >= 500) {
+      _showErrorSnackBar('Server error. Please try again later.');
+    } else {
+      _showErrorSnackBar(e.message);
+    }
   } catch (e) {
     setState(() => _isPoLoading = false);
-    _showErrorSnackBar(e.toString());
+    if (!mounted) return;
+    _showErrorSnackBar('Connection error: ${e.toString()}');
   }
 }
 
